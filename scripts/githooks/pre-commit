@@ -1,0 +1,12 @@
+#!/bin/sh
+
+go_files=$(git diff --name-only --cached | grep *.go)
+
+if [ -n "$go_files" ]; then
+    golangci-lint run --fix
+fi
+
+# Exclude deleted files from commit
+# which I doubt will ever happen here
+# Source: https://github.com/CompSciLauren/awesome-git-hooks/blob/master/pre-commit-hooks/format-code.hook
+git diff --name-only --cached --diff-filter=d | xargs -l git add
