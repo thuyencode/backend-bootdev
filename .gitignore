@@ -13,7 +13,7 @@
 !Makefile
 !.air.toml
 !.tool-versions
-
+!.golangci.*
 !.zed/tasks.json
 !.gram/tasks.jsonc
 
