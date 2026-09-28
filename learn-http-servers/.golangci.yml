@@ -1,0 +1,15 @@
+version: "2"
+linters:
+  enable:
+    - err113
+    - errcheck
+    - errchkjson
+    - errname
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+    - swaggo
