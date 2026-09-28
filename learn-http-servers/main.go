@@ -1,14 +1,19 @@
 package main
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 )
 
-func main() {
-	mux := http.ServeMux{}
-	server := http.Server{Handler: &mux, Addr: ":8080"}
+const PORT = "8080"
 
-	if err := server.ListenAndServe(); err != nil {
-		println(err)
-	}
+func main() {
+	mux := http.NewServeMux()
+	server := http.Server{Handler: mux, Addr: ":" + PORT}
+
+	mux.Handle("/", http.FileServer(http.Dir("assets")))
+
+	fmt.Printf("Server is listening on localhost:%s\n", PORT)
+	log.Fatal(server.ListenAndServe())
 }
