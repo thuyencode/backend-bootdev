@@ -1,5 +1,7 @@
+dev:
+	air
 run:
-	go build -o out && ./out
+	go run .
 fmt:
 	golangci-lint fmt
 lint:
