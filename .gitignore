@@ -22,6 +22,8 @@
 !go.mod
 !*.html
 
+!docker-compose.yml
+
 !scripts/**/*
 !*/assets/**/*
 
