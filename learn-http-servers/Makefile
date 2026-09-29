@@ -2,6 +2,8 @@ dev:
 	air
 run:
 	go run .
+test:
+	go test -json -cover ./... | gotestfmt
 fmt:
 	golangci-lint fmt
 lint:

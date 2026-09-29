@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"unicode/utf8"
+
+	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/filter"
 )
 
 type apiConfig struct {
@@ -84,7 +86,8 @@ func main() {
 			return
 		}
 
-		if _, err := fmt.Fprint(w, `{"valid":true}`); err != nil {
+		_, err := fmt.Fprintf(w, `{"cleaned_body":%q}`, filter.Censor(chirp.Body))
+		if err != nil {
 			slog.Error("Failed to write response body", "err", err)
 			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
