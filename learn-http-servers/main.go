@@ -1,19 +1,25 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"unicode/utf8"
 
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/database"
 	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/filter"
 )
 
 type apiConfig struct {
 	fileServerHits atomic.Int32
+	dbQueries      *database.Queries
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -26,7 +32,15 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 const PORT = "8080"
 
 func main() {
-	apiCfg := apiConfig{fileServerHits: atomic.Int32{}}
+	log.Fatal(godotenv.Load())
+	dbURL := os.Getenv("DB_URL")
+
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	apiCfg := apiConfig{fileServerHits: atomic.Int32{}, dbQueries: database.New(db)}
 	mux := http.NewServeMux()
 	server := http.Server{Handler: mux, Addr: ":" + PORT}
 
