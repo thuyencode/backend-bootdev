@@ -30,7 +30,7 @@ func main() {
 		apiCfg.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))),
 	)
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, err := fmt.Fprint(w, http.StatusText(http.StatusOK))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -41,7 +41,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/metrics", func(w http.ResponseWriter, r *http.Request) {
 		_, err := fmt.Fprintf(w, "Hits: %d", apiCfg.fileServerHits.Load())
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -52,7 +52,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	mux.HandleFunc("POST /reset", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/reset", func(w http.ResponseWriter, r *http.Request) {
 		apiCfg.fileServerHits.Store(0)
 	})
 
