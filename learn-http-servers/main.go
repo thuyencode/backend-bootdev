@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 type apiConfig struct {
@@ -33,7 +36,8 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, err := fmt.Fprint(w, http.StatusText(http.StatusOK))
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			slog.Error("Failed to write response body", "err", err)
+			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
@@ -50,7 +54,8 @@ func main() {
   </body>
 </html>`, apiCfg.fileServerHits.Load())
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			slog.Error("Failed to write response body", "err", err)
+			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
@@ -60,6 +65,30 @@ func main() {
 
 	mux.HandleFunc("POST /admin/reset", func(w http.ResponseWriter, r *http.Request) {
 		apiCfg.fileServerHits.Store(0)
+	})
+
+	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
+		var chirp struct {
+			Body string `json:"body"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&chirp); err != nil {
+			slog.Error("Failed to decode request body", "err", err)
+			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if utf8.RuneCountInString(chirp.Body) > 140 {
+			http.Error(w, `{"error":"Chirp is too long"}`, http.StatusBadRequest)
+			return
+		}
+
+		if _, err := fmt.Fprint(w, `{"valid":true}`); err != nil {
+			slog.Error("Failed to write response body", "err", err)
+			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
 	})
 
 	fmt.Printf("Server is listening on localhost:%s\n", PORT)
