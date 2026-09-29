@@ -39,6 +39,7 @@ func main() {
 		_, err := fmt.Fprint(w, http.StatusText(http.StatusOK))
 		if err != nil {
 			slog.Error("Failed to write response body", "err", err)
+			w.Header().Set("Content-Type", "application/json")
 			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
@@ -57,6 +58,7 @@ func main() {
 </html>`, apiCfg.fileServerHits.Load())
 		if err != nil {
 			slog.Error("Failed to write response body", "err", err)
+			w.Header().Set("Content-Type", "application/json")
 			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
@@ -70,6 +72,8 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		var chirp struct {
 			Body string `json:"body"`
 		}
