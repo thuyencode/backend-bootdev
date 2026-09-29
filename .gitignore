@@ -11,18 +11,18 @@
 !/.gitignore
 !.env.example
 !Makefile
-!.air.toml
 !.tool-versions
-!.golangci.*
 !.zed/tasks.json
 !.gram/tasks.jsonc
+!*.toml
+!*.yml
 
 !*.go
 !go.sum
 !go.mod
 !*.html
+!*.sql
 
-!docker-compose.yml
 
 !scripts/**/*
 !*/assets/**/*
