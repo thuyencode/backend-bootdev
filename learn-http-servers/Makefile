@@ -12,4 +12,3 @@ fix:
 	golangci-lint run --fix
 clean:
 	go clean
-	git clean -dfX
