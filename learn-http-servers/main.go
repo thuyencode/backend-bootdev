@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -17,7 +18,6 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/lib/pq/pqerror"
 	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/database"
-	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/filter"
 )
 
 type apiConfig struct {
@@ -103,33 +103,6 @@ func main() {
 		apiCfg.fileServerHits.Store(0)
 	})
 
-	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		var deserialized struct {
-			Body string `json:"body"`
-		}
-
-		decoder := json.NewDecoder(r.Body)
-		if err := decoder.Decode(&deserialized); err != nil {
-			slog.Error("Failed to decode request body", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
-			return
-		}
-
-		if utf8.RuneCountInString(deserialized.Body) > 140 {
-			httpError(w, `{"error":"Chirp is too long"}`, http.StatusBadRequest)
-			return
-		}
-
-		_, err := fmt.Fprintf(w, `{"cleaned_body":%q}`, filter.Censor(deserialized.Body))
-		if err != nil {
-			slog.Error("Failed to write response body", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
-			return
-		}
-	})
-
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -157,7 +130,7 @@ func main() {
 				return
 			}
 
-			slog.Error("Failed to insert new db record", "err", err)
+			slog.Error("Failed to insert new db record(s)", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
@@ -165,6 +138,56 @@ func main() {
 		resBody, err := json.Marshal(newUser)
 		if err != nil {
 			slog.Error("Failed to marshal new user record", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		if _, err = w.Write(resBody); err != nil {
+			slog.Error("Failed to write response body", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+	})
+
+	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var deserialized database.CreateChirpParams
+
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&deserialized); err != nil {
+			slog.Error("Failed to decode request body", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if utf8.RuneCountInString(deserialized.Body) > 140 {
+			httpError(w, `{"error":"Chirp is too long"}`, http.StatusBadRequest)
+			return
+		}
+
+		_, err := apiCfg.dbQueries.SelectUser(r.Context(), deserialized.UserID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				httpError(w, `{"error":"User id not found"}`, http.StatusNotFound)
+				return
+			}
+			slog.Error("Failed retrieve db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		newChirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), deserialized)
+		if err != nil {
+			slog.Error("Failed insert new db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		resBody, err := json.Marshal(newChirp)
+		if err != nil {
+			slog.Error("Failed to marshal new chirp record", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}

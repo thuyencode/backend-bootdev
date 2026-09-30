@@ -5,4 +5,12 @@ VALUES
   (gen_random_uuid (), NOW(), NOW(), $1) RETURNING *;
 
 -- name: PruneUsers :exec
-TRUNCATE TABLE users;
+DELETE FROM users;
+
+-- name: SelectUser :one
+SELECT
+  *
+FROM
+  users
+WHERE
+  id = $1;
