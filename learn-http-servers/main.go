@@ -16,7 +16,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/lib/pq"
-	_ "github.com/lib/pq"
 	"github.com/lib/pq/pqerror"
 	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/database"
 )
