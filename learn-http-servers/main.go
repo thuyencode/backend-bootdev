@@ -7,12 +7,15 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"os"
 	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/joho/godotenv"
+	"github.com/lib/pq"
 	_ "github.com/lib/pq"
+	"github.com/lib/pq/pqerror"
 	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/database"
 	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/filter"
 )
@@ -32,8 +35,12 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 const PORT = "8080"
 
 func main() {
-	log.Fatal(godotenv.Load())
+	if err := godotenv.Load(); err != nil {
+		log.Fatal(err)
+	}
+
 	dbURL := os.Getenv("DB_URL")
+	platform := os.Getenv("PLATFORM")
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -54,7 +61,7 @@ func main() {
 		if err != nil {
 			slog.Error("Failed to write response body", "err", err)
 			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
@@ -73,7 +80,7 @@ func main() {
 		if err != nil {
 			slog.Error("Failed to write response body", "err", err)
 			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
@@ -82,36 +89,104 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /admin/reset", func(w http.ResponseWriter, r *http.Request) {
+		if platform != "dev" {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+
+		if err := apiCfg.dbQueries.PruneUsers(r.Context()); err != nil {
+			slog.Error("Failed to prune users table", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
 		apiCfg.fileServerHits.Store(0)
 	})
 
 	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		var chirp struct {
+		var deserialized struct {
 			Body string `json:"body"`
 		}
 
 		decoder := json.NewDecoder(r.Body)
-		if err := decoder.Decode(&chirp); err != nil {
+		if err := decoder.Decode(&deserialized); err != nil {
 			slog.Error("Failed to decode request body", "err", err)
-			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
-		if utf8.RuneCountInString(chirp.Body) > 140 {
-			http.Error(w, `{"error":"Chirp is too long"}`, http.StatusBadRequest)
+		if utf8.RuneCountInString(deserialized.Body) > 140 {
+			httpError(w, `{"error":"Chirp is too long"}`, http.StatusBadRequest)
 			return
 		}
 
-		_, err := fmt.Fprintf(w, `{"cleaned_body":%q}`, filter.Censor(chirp.Body))
+		_, err := fmt.Fprintf(w, `{"cleaned_body":%q}`, filter.Censor(deserialized.Body))
 		if err != nil {
 			slog.Error("Failed to write response body", "err", err)
-			http.Error(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+	})
+
+	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var deserialzed struct {
+			Email string
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&deserialzed); err != nil {
+			slog.Error("Failed to decode request body", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		parsedEmail, err := mail.ParseAddress(deserialzed.Email)
+		if err != nil {
+			httpError(w, `{"error":"Invalid email address"}`, http.StatusBadRequest)
+			return
+		}
+
+		newUser, err := apiCfg.dbQueries.CreateUser(r.Context(), parsedEmail.Address)
+		if err != nil {
+			if pqErr := pq.As(err, pqerror.UniqueViolation); pqErr != nil {
+				httpError(w, `{"error":"Email address already registered"}`, http.StatusBadRequest)
+				return
+			}
+
+			slog.Error("Failed to insert new db record", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		resBody, err := json.Marshal(newUser)
+		if err != nil {
+			slog.Error("Failed to marshal new user record", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		if _, err = w.Write(resBody); err != nil {
+			slog.Error("Failed to write response body", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 	})
 
 	fmt.Printf("Server is listening on localhost:%s\n", PORT)
 	log.Fatal(server.ListenAndServe())
+}
+
+// This is http.Error but is doesn't override Content-Type header
+func httpError(w http.ResponseWriter, error string, code int) {
+	h := w.Header()
+
+	h.Del("Content-Length")
+	h.Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(code)
+	fmt.Fprintln(w, error)
 }
