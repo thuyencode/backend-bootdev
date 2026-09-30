@@ -60,8 +60,6 @@ func main() {
 		_, err := fmt.Fprint(w, http.StatusText(http.StatusOK))
 		if err != nil {
 			slog.Error("Failed to write response body", "err", err)
-			w.Header().Set("Content-Type", "application/json")
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
@@ -79,8 +77,6 @@ func main() {
 </html>`, apiCfg.fileServerHits.Load())
 		if err != nil {
 			slog.Error("Failed to write response body", "err", err)
-			w.Header().Set("Content-Type", "application/json")
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
@@ -112,8 +108,7 @@ func main() {
 
 		decoder := json.NewDecoder(r.Body)
 		if err := decoder.Decode(&deserialzed); err != nil {
-			slog.Error("Failed to decode request body", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
 			return
 		}
 
@@ -137,7 +132,7 @@ func main() {
 
 		resBody, err := json.Marshal(newUser)
 		if err != nil {
-			slog.Error("Failed to marshal new user record", "err", err)
+			slog.Error("Failed to marshal db record(s)", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
@@ -145,7 +140,6 @@ func main() {
 		w.WriteHeader(http.StatusCreated)
 		if _, err = w.Write(resBody); err != nil {
 			slog.Error("Failed to write response body", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 	})
@@ -157,8 +151,7 @@ func main() {
 
 		decoder := json.NewDecoder(r.Body)
 		if err := decoder.Decode(&deserialized); err != nil {
-			slog.Error("Failed to decode request body", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
 			return
 		}
 
@@ -173,21 +166,21 @@ func main() {
 				httpError(w, `{"error":"User id not found"}`, http.StatusNotFound)
 				return
 			}
-			slog.Error("Failed retrieve db record(s)", "err", err)
+			slog.Error("Failed to retrieve db record(s)", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
 		newChirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), deserialized)
 		if err != nil {
-			slog.Error("Failed insert new db record(s)", "err", err)
+			slog.Error("Failed to insert new db record(s)", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
 		resBody, err := json.Marshal(newChirp)
 		if err != nil {
-			slog.Error("Failed to marshal new chirp record", "err", err)
+			slog.Error("Failed to marshal db record(s)", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
@@ -195,7 +188,30 @@ func main() {
 		w.WriteHeader(http.StatusCreated)
 		if _, err = w.Write(resBody); err != nil {
 			slog.Error("Failed to write response body", "err", err)
+			return
+		}
+	})
+
+	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		chirps, err := apiCfg.dbQueries.SelectChirps(r.Context())
+		if err != nil {
+			slog.Error("Failed to retrieve db record(s)", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		resBody, err := json.Marshal(chirps)
+		if err != nil {
+			slog.Error("Failed to marshal db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		if _, err = w.Write(resBody); err != nil {
+			slog.Error("Failed to write response body", "err", err)
 			return
 		}
 	})
