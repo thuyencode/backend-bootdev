@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
@@ -163,7 +164,7 @@ func main() {
 		_, err := apiCfg.dbQueries.SelectUser(r.Context(), deserialized.UserID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				httpError(w, `{"error":"User id not found"}`, http.StatusNotFound)
+				httpError(w, `{"error":"User not found"}`, http.StatusNotFound)
 				return
 			}
 			slog.Error("Failed to retrieve db record(s)", "err", err)
@@ -203,6 +204,40 @@ func main() {
 		}
 
 		resBody, err := json.Marshal(chirps)
+		if err != nil {
+			slog.Error("Failed to marshal db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		if _, err = w.Write(resBody); err != nil {
+			slog.Error("Failed to write response body", "err", err)
+			return
+		}
+	})
+
+	mux.HandleFunc("GET /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		chirpID, err := uuid.Parse(r.PathValue("chirpID"))
+		if err != nil {
+			httpError(w, `{"error":"A valid ID is required in the path"}`, http.StatusBadRequest)
+			return
+		}
+
+		chirp, err := apiCfg.dbQueries.SelectChirp(r.Context(), chirpID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				httpError(w, `{"error":"Chirp not found"}`, http.StatusNotFound)
+				return
+			}
+			slog.Error("Failed to retrieve db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		resBody, err := json.Marshal(chirp)
 		if err != nil {
 			slog.Error("Failed to marshal db record(s)", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
