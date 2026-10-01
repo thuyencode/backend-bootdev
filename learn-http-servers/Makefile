@@ -3,7 +3,7 @@ dev:
 run:
 	go run .
 test:
-	go test -json -cover ./... | gotestfmt
+	go test -json ./... | gotestfmt
 fmt:
 	golangci-lint fmt
 lint:
