@@ -17,6 +17,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/lib/pq"
 	"github.com/lib/pq/pqerror"
+	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/auth"
 	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/database"
 )
 
@@ -103,7 +104,8 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 
 		var deserialzed struct {
-			Email string
+			Email    string `json:"email"`
+			Password string `json:"password"`
 		}
 
 		decoder := json.NewDecoder(r.Body)
@@ -118,7 +120,17 @@ func main() {
 			return
 		}
 
-		newUser, err := apiCfg.dbQueries.CreateUser(r.Context(), parsedEmail.Address)
+		hashedPassword, err := auth.HashPassword(deserialzed.Password)
+		if err != nil {
+			slog.Error("Failed to hash password", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		newUser, err := apiCfg.dbQueries.CreateUser(
+			r.Context(),
+			database.CreateUserParams{Email: parsedEmail.Address, HashedPassword: hashedPassword},
+		)
 		if err != nil {
 			if pqErr := pq.As(err, pqerror.UniqueViolation); pqErr != nil {
 				httpError(w, `{"error":"Email address already registered"}`, http.StatusBadRequest)
@@ -144,6 +156,58 @@ func main() {
 		}
 	})
 
+	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var deserialzed struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&deserialzed); err != nil {
+			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			return
+		}
+
+		parsedEmail, err := mail.ParseAddress(deserialzed.Email)
+		if err != nil {
+			httpError(w, `{"error":"Invalid email address"}`, http.StatusBadRequest)
+			return
+		}
+
+		user, _ := apiCfg.dbQueries.SelectUserByEmail(r.Context(), parsedEmail.Address)
+		if user == (database.User{}) {
+			httpError(w, `{"error":"Invalid email address or password"}`, http.StatusUnauthorized)
+			return
+		}
+
+		match, err := auth.CheckPasswordHash(deserialzed.Password, user.HashedPassword)
+		if err != nil {
+			slog.Error("Failed to hash password", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if !match {
+			httpError(w, `{"error":"Invalid email address or password"}`, http.StatusUnauthorized)
+			return
+		}
+
+		resBody, err := json.Marshal(user)
+		if err != nil {
+			slog.Error("Failed to marshal db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		if _, err = w.Write(resBody); err != nil {
+			slog.Error("Failed to write response body", "err", err)
+			return
+		}
+	})
+
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -160,7 +224,7 @@ func main() {
 			return
 		}
 
-		_, err := apiCfg.dbQueries.SelectUser(r.Context(), deserialized.UserID)
+		_, err := apiCfg.dbQueries.SelectUserById(r.Context(), deserialized.UserID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				httpError(w, `{"error":"User not found"}`, http.StatusNotFound)
