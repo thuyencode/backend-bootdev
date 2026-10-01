@@ -1,0 +1,119 @@
+package auth
+
+import (
+	"reflect"
+	"testing"
+	"time"
+	"uuid"
+
+	"github.com/golang-jwt/jwt/v5"
+)
+
+func TestUnit_MakeJWT(t *testing.T) {
+	userID := uuid.New()
+	tokenSecret := "Shhh this is a secret"
+	expiresIn := time.Minute * 15
+
+	tokenString, err := MakeJWT(userID, tokenSecret, expiresIn)
+	if err != nil {
+		t.Fatalf("want no error, have: %q", err)
+	}
+
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		&jwt.RegisteredClaims{},
+		func(_ *jwt.Token) (any, error) {
+			return []byte(tokenSecret), nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("want no error, have: %q", err)
+	}
+
+	cases := []struct {
+		name     string
+		expected any
+	}{{
+		name:     "issuer",
+		expected: "chirpy-access",
+	}, {
+		name:     "issuedAt",
+		expected: jwt.NewNumericDate(time.Now()),
+	}, {
+		name:     "expiresAt",
+		expected: jwt.NewNumericDate(time.Now().Add(expiresIn)),
+	}, {
+		name:     "subject",
+		expected: userID.String(),
+	}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var actual any
+			var err error
+
+			switch c.name {
+			case "issuer":
+				actual, err = token.Claims.GetIssuer()
+			case "issuedAt":
+				actual, err = token.Claims.GetIssuedAt()
+			case "expiresAt":
+				actual, err = token.Claims.GetExpirationTime()
+			case "subject":
+				actual, err = token.Claims.GetSubject()
+			}
+
+			if err != nil {
+				t.Errorf("want no error, have: %q", err)
+			}
+
+			if !reflect.DeepEqual(actual, c.expected) {
+				t.Errorf("want %q, have %q", c.expected, actual)
+			}
+		})
+	}
+}
+
+func TestUnit_ValidateJWT(t *testing.T) {
+	userID := uuid.New()
+	tokenSecret := "Shhh this is a secret"
+	expiresIn := time.Second * 3
+
+	tokenString, err := MakeJWT(userID, tokenSecret, expiresIn)
+	if err != nil {
+		t.Fatalf("want no error, have: %q", err)
+	}
+
+	t.Run("subject", func(t *testing.T) {
+		actual, err := ValidateJWT(tokenString, tokenSecret)
+		if err != nil {
+			t.Errorf("want no error, have: %q", err)
+		}
+		if !reflect.DeepEqual(actual, userID) {
+			t.Errorf("want %q, have %q", userID, actual)
+		}
+	})
+
+	t.Run("should reject expired token(s)", func(t *testing.T) {
+		time.Sleep(time.Second * 4)
+		actual, err := ValidateJWT(tokenString, tokenSecret)
+		expected := uuid.Nil()
+		if err == nil {
+			t.Errorf("want error to not be nil")
+		}
+		if !reflect.DeepEqual(actual, expected) {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+
+	t.Run("should reject wrong secret", func(t *testing.T) {
+		actual, err := ValidateJWT(tokenString, "This is not the secret we want")
+		expected := uuid.Nil()
+		if err == nil {
+			t.Errorf("want error to not be nil")
+		}
+		if !reflect.DeepEqual(actual, expected) {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+}
