@@ -29,6 +29,11 @@ type apiConfig struct {
 	jwtSecret      string
 }
 
+type credential struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.fileServerHits.Add(1)
@@ -115,24 +120,20 @@ func main() {
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		var deserialzed struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
-		}
-
+		var deserialized credential
 		decoder := json.NewDecoder(r.Body)
-		if err := decoder.Decode(&deserialzed); err != nil {
+		if err := decoder.Decode(&deserialized); err != nil {
 			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		parsedEmail, err := mail.ParseAddress(deserialzed.Email)
+		parsedEmail, err := mail.ParseAddress(deserialized.Email)
 		if err != nil {
 			h.WriteErrorResponse(w, "Invalid email address", http.StatusBadRequest)
 			return
 		}
 
-		hashedPassword, err := auth.HashPassword(deserialzed.Password)
+		hashedPassword, err := auth.HashPassword(deserialized.Password)
 		if err != nil {
 			h.WriteInternalServerErrorResponse(w, "Failed to hash password", err)
 			return
@@ -175,18 +176,14 @@ func main() {
 			RefreshToken string `json:"refresh_token"`
 		}
 
-		var deserialzed struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
-		}
-
+		var deserialized credential
 		decoder := json.NewDecoder(r.Body)
-		if err := decoder.Decode(&deserialzed); err != nil {
+		if err := decoder.Decode(&deserialized); err != nil {
 			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		parsedEmail, err := mail.ParseAddress(deserialzed.Email)
+		parsedEmail, err := mail.ParseAddress(deserialized.Email)
 		if err != nil {
 			h.WriteErrorResponse(w, "Invalid email address", http.StatusBadRequest)
 			return
@@ -202,7 +199,7 @@ func main() {
 			return
 		}
 
-		match, err := auth.CheckPasswordHash(deserialzed.Password, user.HashedPassword)
+		match, err := auth.CheckPasswordHash(deserialized.Password, user.HashedPassword)
 		if err != nil {
 			h.WriteInternalServerErrorResponse(w, "Failed to hash password", err)
 			return
@@ -359,6 +356,8 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		type responseBody struct {
 			Token string `json:"token"`
 		}
@@ -442,6 +441,82 @@ func main() {
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("PUT /api/users", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			h.WriteErrorResponse(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		userID, err := auth.ValidateJWT(bearerToken, apiCfg.jwtSecret)
+		if err != nil {
+			h.WriteErrorResponse(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		_, err = apiCfg.dbQueries.SelectUserById(r.Context(), userID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				h.WriteErrorResponse(w, "User id not found", http.StatusNotFound)
+				return
+			}
+			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
+			return
+		}
+
+		var deserialized credential
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&deserialized); err != nil {
+			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		parsedEmail, err := mail.ParseAddress(deserialized.Email)
+		if err != nil {
+			h.WriteErrorResponse(w, "Invalid email address", http.StatusBadRequest)
+			return
+		}
+
+		hashedPassword, err := auth.HashPassword(deserialized.Password)
+		if err != nil {
+			h.WriteInternalServerErrorResponse(w, "Failed to hash password", err)
+			return
+		}
+
+		updatedUser, err := apiCfg.dbQueries.UpdateUser(
+			r.Context(),
+			database.UpdateUserParams{
+				ID:             userID,
+				Email:          parsedEmail.Address,
+				HashedPassword: hashedPassword,
+			},
+		)
+		if err != nil {
+			if pqErr := pq.As(err, pqerror.UniqueViolation); pqErr != nil {
+				h.WriteErrorResponse(
+					w,
+					"Email address already registered",
+					http.StatusUnauthorized,
+				)
+				return
+			}
+
+			h.WriteInternalServerErrorResponse(w, "Failed to insert new db record(s)", err)
+			return
+		}
+
+		resBody, err := json.Marshal(updatedUser)
+		if err != nil {
+			h.WriteInternalServerErrorResponse(w, "Failed to marshal db record(s)", err)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		h.WriteResponseBody(w, resBody)
 	})
 
 	fmt.Printf("Server is listening on localhost:%s\n", PORT)
