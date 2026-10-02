@@ -20,6 +20,7 @@ import (
 	"github.com/lib/pq/pqerror"
 	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/auth"
 	"github.com/thuyencode/backend-bootdev/learn-http-servers/internals/database"
+	h "github.com/thuyencode/backend-bootdev/learn-http-servers/internals/helper"
 )
 
 type apiConfig struct {
@@ -60,6 +61,7 @@ func main() {
 		dbQueries:      database.New(db),
 		jwtSecret:      jwtSecret,
 	}
+
 	mux := http.NewServeMux()
 	server := http.Server{Handler: mux, Addr: ":" + PORT}
 
@@ -69,42 +71,41 @@ func main() {
 	)
 
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
-		_, err := fmt.Fprint(w, http.StatusText(http.StatusOK))
-		if err != nil {
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		if _, err := fmt.Fprint(w, http.StatusText(http.StatusOK)); err != nil {
 			slog.Error("Failed to write response body", "err", err)
 			return
 		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	})
 
 	mux.HandleFunc("GET /admin/metrics", func(w http.ResponseWriter, r *http.Request) {
-		_, err := fmt.Fprintf(w, `
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if _, err := fmt.Fprintf(w, `
 <html>
   <body>
     <h1>Welcome, Chirpy Admin</h1>
     <p>Chirpy has been visited %d times!</p>
   </body>
-</html>`, apiCfg.fileServerHits.Load())
-		if err != nil {
+</html>`, apiCfg.fileServerHits.Load()); err != nil {
 			slog.Error("Failed to write response body", "err", err)
 			return
 		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	})
 
 	mux.HandleFunc("POST /admin/reset", func(w http.ResponseWriter, r *http.Request) {
 		if platform != "dev" {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			h.WriteErrorResponse(
+				w,
+				http.StatusText(http.StatusForbidden),
+				http.StatusForbidden,
+			)
 			return
 		}
 
 		if err := apiCfg.dbQueries.PruneUsers(r.Context()); err != nil {
-			slog.Error("Failed to prune users table", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to prune users table", err)
 			return
 		}
 
@@ -121,20 +122,19 @@ func main() {
 
 		decoder := json.NewDecoder(r.Body)
 		if err := decoder.Decode(&deserialzed); err != nil {
-			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		parsedEmail, err := mail.ParseAddress(deserialzed.Email)
 		if err != nil {
-			httpError(w, `{"error":"Invalid email address"}`, http.StatusBadRequest)
+			h.WriteErrorResponse(w, "Invalid email address", http.StatusBadRequest)
 			return
 		}
 
 		hashedPassword, err := auth.HashPassword(deserialzed.Password)
 		if err != nil {
-			slog.Error("Failed to hash password", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to hash password", err)
 			return
 		}
 
@@ -144,27 +144,26 @@ func main() {
 		)
 		if err != nil {
 			if pqErr := pq.As(err, pqerror.UniqueViolation); pqErr != nil {
-				httpError(w, `{"error":"Email address already registered"}`, http.StatusBadRequest)
+				h.WriteErrorResponse(
+					w,
+					"Email address already registered",
+					http.StatusBadRequest,
+				)
 				return
 			}
 
-			slog.Error("Failed to insert new db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to insert new db record(s)", err)
 			return
 		}
 
 		resBody, err := json.Marshal(newUser)
 		if err != nil {
-			slog.Error("Failed to marshal db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to marshal db record(s)", err)
 			return
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		if _, err = w.Write(resBody); err != nil {
-			slog.Error("Failed to write response body", "err", err)
-			return
-		}
+		h.WriteResponseBody(w, resBody)
 	})
 
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
@@ -183,38 +182,44 @@ func main() {
 
 		decoder := json.NewDecoder(r.Body)
 		if err := decoder.Decode(&deserialzed); err != nil {
-			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		parsedEmail, err := mail.ParseAddress(deserialzed.Email)
 		if err != nil {
-			httpError(w, `{"error":"Invalid email address"}`, http.StatusBadRequest)
+			h.WriteErrorResponse(w, "Invalid email address", http.StatusBadRequest)
 			return
 		}
 
 		user, _ := apiCfg.dbQueries.SelectUserByEmail(r.Context(), parsedEmail.Address)
 		if user == (database.User{}) {
-			httpError(w, `{"error":"Invalid email address or password"}`, http.StatusUnauthorized)
+			h.WriteErrorResponse(
+				w,
+				"Invalid email address or password",
+				http.StatusUnauthorized,
+			)
 			return
 		}
 
 		match, err := auth.CheckPasswordHash(deserialzed.Password, user.HashedPassword)
 		if err != nil {
-			slog.Error("Failed to hash password", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to hash password", err)
 			return
 		}
 
 		if !match {
-			httpError(w, `{"error":"Invalid email address or password"}`, http.StatusUnauthorized)
+			h.WriteErrorResponse(
+				w,
+				"Invalid email address or password",
+				http.StatusUnauthorized,
+			)
 			return
 		}
 
 		accessToken, err := auth.MakeJWT(user.ID, apiCfg.jwtSecret, time.Hour)
 		if err != nil {
-			slog.Error("Failed to create a JWT token", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to create a JWT token", err)
 			return
 		}
 
@@ -228,24 +233,18 @@ func main() {
 			},
 		)
 		if err != nil {
-			slog.Error("Failed to insert new db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to insert new db record(s)", err)
 			return
 		}
 
-		v := responseBody{user, accessToken, refreshToken}
-		resBody, err := json.Marshal(v)
+		resBody, err := json.Marshal(responseBody{user, accessToken, refreshToken})
 		if err != nil {
-			slog.Error("Failed to marshal a value", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to marshal a value", err)
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
-		if _, err = w.Write(resBody); err != nil {
-			slog.Error("Failed to write response body", "err", err)
-			return
-		}
+		h.WriteResponseBody(w, resBody)
 	})
 
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
@@ -257,35 +256,34 @@ func main() {
 
 		token, err := auth.GetBearerToken(r.Header)
 		if err != nil {
-			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		userId, err := auth.ValidateJWT(token, apiCfg.jwtSecret)
 		if err != nil {
-			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusUnauthorized)
+			h.WriteErrorResponse(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
 
 		decoder := json.NewDecoder(r.Body)
 		if err := decoder.Decode(&deserialized); err != nil {
-			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		if utf8.RuneCountInString(deserialized.Body) > 140 {
-			httpError(w, `{"error":"Chirp is too long"}`, http.StatusBadRequest)
+			h.WriteErrorResponse(w, "Chirp is too long", http.StatusBadRequest)
 			return
 		}
 
 		_, err = apiCfg.dbQueries.SelectUserById(r.Context(), userId)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				httpError(w, `{"error":"User not found"}`, http.StatusNotFound)
+				h.WriteErrorResponse(w, "User not found", http.StatusNotFound)
 				return
 			}
-			slog.Error("Failed to retrieve db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
 			return
 		}
 
@@ -294,23 +292,18 @@ func main() {
 			database.CreateChirpParams{UserID: userId, Body: deserialized.Body},
 		)
 		if err != nil {
-			slog.Error("Failed to insert new db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to insert new db record(s)", err)
 			return
 		}
 
 		resBody, err := json.Marshal(newChirp)
 		if err != nil {
-			slog.Error("Failed to marshal db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to marshal db record(s)", err)
 			return
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		if _, err = w.Write(resBody); err != nil {
-			slog.Error("Failed to write response body", "err", err)
-			return
-		}
+		h.WriteResponseBody(w, resBody)
 	})
 
 	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
@@ -318,23 +311,18 @@ func main() {
 
 		chirps, err := apiCfg.dbQueries.SelectChirps(r.Context())
 		if err != nil {
-			slog.Error("Failed to retrieve db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
 			return
 		}
 
 		resBody, err := json.Marshal(chirps)
 		if err != nil {
-			slog.Error("Failed to marshal db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to marshal db record(s)", err)
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
-		if _, err = w.Write(resBody); err != nil {
-			slog.Error("Failed to write response body", "err", err)
-			return
-		}
+		h.WriteResponseBody(w, resBody)
 	})
 
 	mux.HandleFunc("GET /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
@@ -342,33 +330,32 @@ func main() {
 
 		chirpID, err := uuid.Parse(r.PathValue("chirpID"))
 		if err != nil {
-			httpError(w, `{"error":"A valid ID is required in the path"}`, http.StatusBadRequest)
+			h.WriteErrorResponse(
+				w,
+				"A valid ID is required in the path",
+				http.StatusBadRequest,
+			)
 			return
 		}
 
 		chirp, err := apiCfg.dbQueries.SelectChirp(r.Context(), chirpID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				httpError(w, `{"error":"Chirp not found"}`, http.StatusNotFound)
+				h.WriteErrorResponse(w, "Chirp not found", http.StatusNotFound)
 				return
 			}
-			slog.Error("Failed to retrieve db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
 			return
 		}
 
 		resBody, err := json.Marshal(chirp)
 		if err != nil {
-			slog.Error("Failed to marshal db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to marshal db record(s)", err)
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
-		if _, err = w.Write(resBody); err != nil {
-			slog.Error("Failed to write response body", "err", err)
-			return
-		}
+		h.WriteResponseBody(w, resBody)
 	})
 
 	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
@@ -378,80 +365,79 @@ func main() {
 
 		bearerToken, err := auth.GetBearerToken(r.Header)
 		if err != nil {
-			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		refreshToken, err := apiCfg.dbQueries.SelectRefreshToken(r.Context(), bearerToken)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				httpError(w, `{"error":"Refresh token not found"}`, http.StatusUnauthorized)
+				h.WriteErrorResponse(w, "Refresh token not found", http.StatusUnauthorized)
 				return
 			}
-			slog.Error("Failed to retrieve db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
 			return
 		}
 
 		if refreshToken.RevokedAt.Valid && refreshToken.RevokedAt.Time.Before(time.Now()) {
-			httpError(w, `{"error":"Refresh token revoked"}`, http.StatusUnauthorized)
+			h.WriteErrorResponse(
+				w,
+				`{"error":"Refresh token revoked"}`,
+				http.StatusUnauthorized,
+			)
 			return
 		}
 
 		if refreshToken.ExpiresAt.Before(time.Now()) {
-			httpError(w, `{"error":"Refresh token expired"}`, http.StatusUnauthorized)
+			h.WriteErrorResponse(
+				w,
+				`{"error":"Refresh token expired"}`,
+				http.StatusUnauthorized,
+			)
 			return
 		}
 
 		accessToken, err := auth.MakeJWT(refreshToken.UserID, jwtSecret, time.Hour)
 		if err != nil {
-			slog.Error("Failed to create a JWT token", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to create a JWT token", err)
 			return
 		}
 
-		v := responseBody{accessToken}
-		resBody, err := json.Marshal(v)
+		resBody, err := json.Marshal(responseBody{accessToken})
 		if err != nil {
-			slog.Error("Failed to marshal a value", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to marshal a value", err)
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
-		if _, err = w.Write(resBody); err != nil {
-			slog.Error("Failed to write response body", "err", err)
-			return
-		}
+		h.WriteResponseBody(w, resBody)
 	})
 
 	mux.HandleFunc("POST /api/revoke", func(w http.ResponseWriter, r *http.Request) {
 		bearerToken, err := auth.GetBearerToken(r.Header)
 		if err != nil {
-			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		refreshToken, err := apiCfg.dbQueries.SelectRefreshToken(r.Context(), bearerToken)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				httpError(w, `{"error":"Refresh token not found"}`, http.StatusUnauthorized)
+				h.WriteErrorResponse(w, "Refresh token not found", http.StatusUnauthorized)
 				return
 			}
-			slog.Error("Failed to retrieve db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
 			return
 		}
 
 		if refreshToken.ExpiresAt.Before(time.Now()) {
-			httpError(w, `{"error":"Refresh token expired"}`, http.StatusUnauthorized)
+			h.WriteErrorResponse(w, "Refresh token expired", http.StatusUnauthorized)
 			return
 		}
 
 		err = apiCfg.dbQueries.RevokeRefreshToken(r.Context(), bearerToken)
 		if err != nil {
-			slog.Error("Failed to update db record(s)", "err", err)
-			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			h.WriteInternalServerErrorResponse(w, "Failed to update db record(s)", err)
 			return
 		}
 
@@ -460,14 +446,4 @@ func main() {
 
 	fmt.Printf("Server is listening on localhost:%s\n", PORT)
 	log.Fatal(server.ListenAndServe())
-}
-
-// This is http.Error but is doesn't override Content-Type header
-func httpError(w http.ResponseWriter, error string, code int) {
-	h := w.Header()
-
-	h.Del("Content-Length")
-	h.Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(code)
-	fmt.Fprintln(w, error)
 }
