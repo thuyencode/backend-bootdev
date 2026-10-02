@@ -519,6 +519,52 @@ func main() {
 		h.WriteResponseBody(w, resBody)
 	})
 
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			h.WriteErrorResponse(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		chirpID, err := uuid.Parse(r.PathValue("chirpID"))
+		if err != nil {
+			h.WriteErrorResponse(
+				w,
+				"A valid ID is required in the path",
+				http.StatusBadRequest,
+			)
+			return
+		}
+
+		chirp, err := apiCfg.dbQueries.SelectChirp(r.Context(), chirpID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				h.WriteErrorResponse(w, "Chirp not found", http.StatusNotFound)
+				return
+			}
+			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
+			return
+		}
+
+		userID, err := auth.ValidateJWT(bearerToken, apiCfg.jwtSecret)
+		if err != nil {
+			h.WriteErrorResponse(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		if userID != chirp.UserID {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		if err = apiCfg.dbQueries.DeleteChirp(r.Context(), chirp.ID); err != nil {
+			h.WriteInternalServerErrorResponse(w, "Failed to delete db record(s)", err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	fmt.Printf("Server is listening on localhost:%s\n", PORT)
 	log.Fatal(server.ListenAndServe())
 }
