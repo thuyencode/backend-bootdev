@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
 	"uuid"
 
 	"github.com/golang-jwt/jwt/v5"

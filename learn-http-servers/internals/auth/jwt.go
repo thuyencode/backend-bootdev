@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
 	"uuid"
 
 	"github.com/golang-jwt/jwt/v5"

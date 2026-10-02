@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
-
 	"uuid"
 
 	"github.com/joho/godotenv"
@@ -173,13 +172,13 @@ func main() {
 
 		type responseBody struct {
 			database.User
-			Token string `json:"token"`
+			Token        string `json:"token"`
+			RefreshToken string `json:"refresh_token"`
 		}
 
 		var deserialzed struct {
-			Email            string `json:"email"`
-			Password         string `json:"password"`
-			ExpiresInSeconds *int   `json:"expires_in_seconds,omitempty"`
+			Email    string `json:"email"`
+			Password string `json:"password"`
 		}
 
 		decoder := json.NewDecoder(r.Body)
@@ -212,22 +211,29 @@ func main() {
 			return
 		}
 
-		var expiresIn time.Duration
-
-		if deserialzed.ExpiresInSeconds == nil {
-			expiresIn = time.Hour
-		} else {
-			expiresIn = time.Duration(*deserialzed.ExpiresInSeconds) * time.Second
-		}
-
-		token, err := auth.MakeJWT(user.ID, apiCfg.jwtSecret, expiresIn)
+		accessToken, err := auth.MakeJWT(user.ID, apiCfg.jwtSecret, time.Hour)
 		if err != nil {
 			slog.Error("Failed to create a JWT token", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
 
-		v := responseBody{user, token}
+		refreshToken := auth.MakeRefreshToken()
+		_, err = apiCfg.dbQueries.CreateRefreshToken(
+			r.Context(),
+			database.CreateRefreshTokenParams{
+				Token:     refreshToken,
+				UserID:    user.ID,
+				ExpiresAt: time.Now().AddDate(0, 0, 60),
+			},
+		)
+		if err != nil {
+			slog.Error("Failed to insert new db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		v := responseBody{user, accessToken, refreshToken}
 		resBody, err := json.Marshal(v)
 		if err != nil {
 			slog.Error("Failed to marshal a value", "err", err)
@@ -283,7 +289,10 @@ func main() {
 			return
 		}
 
-		newChirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{UserID: userId, Body: deserialized.Body})
+		newChirp, err := apiCfg.dbQueries.CreateChirp(
+			r.Context(),
+			database.CreateChirpParams{UserID: userId, Body: deserialized.Body},
+		)
 		if err != nil {
 			slog.Error("Failed to insert new db record(s)", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
@@ -360,6 +369,93 @@ func main() {
 			slog.Error("Failed to write response body", "err", err)
 			return
 		}
+	})
+
+	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		type responseBody struct {
+			Token string `json:"token"`
+		}
+
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			return
+		}
+
+		refreshToken, err := apiCfg.dbQueries.SelectRefreshToken(r.Context(), bearerToken)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				httpError(w, `{"error":"Refresh token not found"}`, http.StatusUnauthorized)
+				return
+			}
+			slog.Error("Failed to retrieve db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if refreshToken.RevokedAt.Valid && refreshToken.RevokedAt.Time.Before(time.Now()) {
+			httpError(w, `{"error":"Refresh token revoked"}`, http.StatusUnauthorized)
+			return
+		}
+
+		if refreshToken.ExpiresAt.Before(time.Now()) {
+			httpError(w, `{"error":"Refresh token expired"}`, http.StatusUnauthorized)
+			return
+		}
+
+		accessToken, err := auth.MakeJWT(refreshToken.UserID, jwtSecret, time.Hour)
+		if err != nil {
+			slog.Error("Failed to create a JWT token", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		v := responseBody{accessToken}
+		resBody, err := json.Marshal(v)
+		if err != nil {
+			slog.Error("Failed to marshal a value", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		if _, err = w.Write(resBody); err != nil {
+			slog.Error("Failed to write response body", "err", err)
+			return
+		}
+	})
+
+	mux.HandleFunc("POST /api/revoke", func(w http.ResponseWriter, r *http.Request) {
+		bearerToken, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			return
+		}
+
+		refreshToken, err := apiCfg.dbQueries.SelectRefreshToken(r.Context(), bearerToken)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				httpError(w, `{"error":"Refresh token not found"}`, http.StatusUnauthorized)
+				return
+			}
+			slog.Error("Failed to retrieve db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if refreshToken.ExpiresAt.Before(time.Now()) {
+			httpError(w, `{"error":"Refresh token expired"}`, http.StatusUnauthorized)
+			return
+		}
+
+		err = apiCfg.dbQueries.RevokeRefreshToken(r.Context(), bearerToken)
+		if err != nil {
+			slog.Error("Failed to update db record(s)", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	fmt.Printf("Server is listening on localhost:%s\n", PORT)
