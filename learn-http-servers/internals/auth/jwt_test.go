@@ -1,9 +1,13 @@
 package auth
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
 	"reflect"
 	"testing"
 	"time"
+
 	"uuid"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -113,6 +117,102 @@ func TestUnit_ValidateJWT(t *testing.T) {
 			t.Errorf("want error to not be nil")
 		}
 		if !reflect.DeepEqual(actual, expected) {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+}
+
+func TestUnit_GetBearerToken(t *testing.T) {
+	t.Run("should return token string for valid request", func(t *testing.T) {
+		userID := uuid.New()
+		tokenSecret := "Shhh this is a secret"
+		expiresIn := time.Minute * 15
+
+		expected, err := MakeJWT(userID, tokenSecret, expiresIn)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		req, err := http.NewRequest(http.MethodGet, "/", nil)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", expected))
+
+		actual, err := GetBearerToken(req.Header)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		if actual != expected {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+
+	t.Run(`should return error for request with no "Authorization" header`, func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "/", nil)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		actual, err := GetBearerToken(req.Header)
+		if err == nil {
+			t.Fatalf("want error to not be nil")
+		}
+
+		if !errors.Is(err, ErrAuthorizationHeaderEmpty) {
+			t.Errorf("want %q, have %q", ErrAuthorizationHeaderEmpty, err)
+		}
+
+		expected := ""
+		if actual != expected {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+
+	t.Run(`should return error for request with no "Bearer"`, func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "/", nil)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		req.Header.Add("Authorization", "Bear")
+
+		actual, err := GetBearerToken(req.Header)
+		if err == nil {
+			t.Fatalf("want error to not be nil")
+		}
+
+		if !errors.Is(err, ErrNoBearerInAuthorizationHeader) {
+			t.Errorf("want %q, have %q", ErrNoBearerInAuthorizationHeader, err)
+		}
+
+		expected := ""
+		if actual != expected {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+
+	t.Run(`should return error for request with no token string`, func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "/", nil)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		req.Header.Add("Authorization", "Bearer ")
+
+		actual, err := GetBearerToken(req.Header)
+		if err == nil {
+			t.Fatalf("want error to not be nil")
+		}
+
+		if !errors.Is(err, ErrNoTokenAfterBearer) {
+			t.Errorf("want %q, have %q", ErrNoTokenAfterBearer, err)
+		}
+
+		expected := ""
+		if actual != expected {
 			t.Errorf("want %q, have %q", expected, actual)
 		}
 	})

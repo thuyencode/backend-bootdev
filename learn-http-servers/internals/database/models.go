@@ -7,7 +7,7 @@ package database
 import (
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type Chirp struct {

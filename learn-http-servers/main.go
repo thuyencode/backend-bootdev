@@ -11,9 +11,11 @@ import (
 	"net/mail"
 	"os"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/joho/godotenv"
 	"github.com/lib/pq"
 	"github.com/lib/pq/pqerror"
@@ -24,6 +26,7 @@ import (
 type apiConfig struct {
 	fileServerHits atomic.Int32
 	dbQueries      *database.Queries
+	jwtSecret      string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -42,13 +45,22 @@ func main() {
 
 	dbURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
+	jwtSecret := os.Getenv("JWT_SECRET")
+
+	if jwtSecret == "" {
+		log.Fatal(`The "JWT_SECRET" enviroment variable is required to not be empty`)
+	}
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	apiCfg := apiConfig{fileServerHits: atomic.Int32{}, dbQueries: database.New(db)}
+	apiCfg := apiConfig{
+		fileServerHits: atomic.Int32{},
+		dbQueries:      database.New(db),
+		jwtSecret:      jwtSecret,
+	}
 	mux := http.NewServeMux()
 	server := http.Server{Handler: mux, Addr: ":" + PORT}
 
@@ -159,9 +171,15 @@ func main() {
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
+		type responseBody struct {
+			database.User
+			Token string `json:"token"`
+		}
+
 		var deserialzed struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
+			Email            string `json:"email"`
+			Password         string `json:"password"`
+			ExpiresInSeconds *int   `json:"expires_in_seconds,omitempty"`
 		}
 
 		decoder := json.NewDecoder(r.Body)
@@ -194,9 +212,25 @@ func main() {
 			return
 		}
 
-		resBody, err := json.Marshal(user)
+		var expiresIn time.Duration
+
+		if deserialzed.ExpiresInSeconds == nil {
+			expiresIn = time.Hour
+		} else {
+			expiresIn = time.Duration(*deserialzed.ExpiresInSeconds) * time.Second
+		}
+
+		token, err := auth.MakeJWT(user.ID, apiCfg.jwtSecret, expiresIn)
 		if err != nil {
-			slog.Error("Failed to marshal db record(s)", "err", err)
+			slog.Error("Failed to create a JWT token", "err", err)
+			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
+			return
+		}
+
+		v := responseBody{user, token}
+		resBody, err := json.Marshal(v)
+		if err != nil {
+			slog.Error("Failed to marshal a value", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)
 			return
 		}
@@ -211,7 +245,21 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		var deserialized database.CreateChirpParams
+		var deserialized struct {
+			Body string `json:"body"`
+		}
+
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusBadRequest)
+			return
+		}
+
+		userId, err := auth.ValidateJWT(token, apiCfg.jwtSecret)
+		if err != nil {
+			httpError(w, fmt.Sprintf(`{"error":%q}`, err), http.StatusUnauthorized)
+			return
+		}
 
 		decoder := json.NewDecoder(r.Body)
 		if err := decoder.Decode(&deserialized); err != nil {
@@ -224,7 +272,7 @@ func main() {
 			return
 		}
 
-		_, err := apiCfg.dbQueries.SelectUserById(r.Context(), deserialized.UserID)
+		_, err = apiCfg.dbQueries.SelectUserById(r.Context(), userId)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				httpError(w, `{"error":"User not found"}`, http.StatusNotFound)
@@ -235,7 +283,7 @@ func main() {
 			return
 		}
 
-		newChirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), deserialized)
+		newChirp, err := apiCfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{UserID: userId, Body: deserialized.Body})
 		if err != nil {
 			slog.Error("Failed to insert new db record(s)", "err", err)
 			httpError(w, `{"error":"Something went wrong"}`, http.StatusInternalServerError)

@@ -8,14 +8,16 @@ package database
 import (
 	"context"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 const createChirp = `-- name: CreateChirp :one
 INSERT INTO
-  chirps (id, created_at, updated_at, user_id, body)
+    chirps (id, created_at, updated_at, user_id, body)
 VALUES
-  (gen_random_uuid (), NOW(), NOW(), $1, $2) RETURNING id, created_at, updated_at, user_id, body
+    (gen_random_uuid (), NOW(), NOW(), $1, $2)
+RETURNING
+    id, created_at, updated_at, user_id, body
 `
 
 type CreateChirpParams struct {
@@ -38,13 +40,13 @@ func (q *Queries) CreateChirp(ctx context.Context, arg CreateChirpParams) (Chirp
 
 const selectChirp = `-- name: SelectChirp :one
 SELECT
-  id, created_at, updated_at, user_id, body
+    id, created_at, updated_at, user_id, body
 FROM
-  chirps
+    chirps
 WHERE
-  id = $1
+    id = $1
 LIMIT
-  1
+    1
 `
 
 func (q *Queries) SelectChirp(ctx context.Context, id uuid.UUID) (Chirp, error) {
@@ -62,11 +64,11 @@ func (q *Queries) SelectChirp(ctx context.Context, id uuid.UUID) (Chirp, error) 
 
 const selectChirps = `-- name: SelectChirps :many
 SELECT
-  id, created_at, updated_at, user_id, body
+    id, created_at, updated_at, user_id, body
 FROM
-  chirps
+    chirps
 ORDER BY
-  created_at ASC
+    created_at ASC
 `
 
 func (q *Queries) SelectChirps(ctx context.Context) ([]Chirp, error) {

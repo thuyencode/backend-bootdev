@@ -2,17 +2,31 @@ package auth
 
 import (
 	"errors"
+	"net/http"
+	"strings"
 	"time"
+
 	"uuid"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var ErrFailedToClaimToken = errors.New("failed to claim token")
+var (
+	ErrFailedToClaimToken            = errors.New("failed to claim token")
+	ErrAuthorizationHeaderEmpty      = errors.New(`the "Authorization" header is empty`)
+	ErrNoBearerInAuthorizationHeader = errors.New(
+		`"Bearer" is absent in the "Authorization" header`,
+	)
+	ErrNoTokenAfterBearer = errors.New(
+		`the token is absent after "Bearer" in the "Authorization" header`,
+	)
+)
+
+const issuer = "chirpy-access"
 
 func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
 	claims := &jwt.RegisteredClaims{
-		Issuer:    "chirpy-access",
+		Issuer:    issuer,
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
 		Subject:   userID.String(),
@@ -38,4 +52,22 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	}
 
 	return uuid.Nil(), ErrFailedToClaimToken
+}
+
+func GetBearerToken(headers http.Header) (string, error) {
+	authorization := headers.Get("Authorization")
+	if authorization == "" {
+		return "", ErrAuthorizationHeaderEmpty
+	}
+
+	if !strings.Contains(authorization, "Bearer ") {
+		return "", ErrNoBearerInAuthorizationHeader
+	}
+
+	tokenString := strings.TrimPrefix(authorization, "Bearer ")
+	if tokenString == "" {
+		return "", ErrNoTokenAfterBearer
+	}
+
+	return tokenString, nil
 }

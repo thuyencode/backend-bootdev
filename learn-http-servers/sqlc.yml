@@ -10,3 +10,11 @@ sql:
         overrides:
           - column: users.hashed_password # prevent exporting the struct tag
             go_struct_tag: json:"-"
+          - db_type: "uuid"
+            go_type: "uuid.UUID"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              import: "uuid"
+              type: "UUID"
+              pointer: true
