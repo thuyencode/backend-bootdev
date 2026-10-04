@@ -19,6 +19,12 @@ var (
 	ErrNoTokenAfterBearer = errors.New(
 		`the token is absent after "Bearer" in the "Authorization" header`,
 	)
+	ErrNoApiKeyInAuthorizationHeader = errors.New(
+		`"ApiKey" is absent in the "Authorization" header`,
+	)
+	ErrNoTokenAfterApiKey = errors.New(
+		`the token is absent after "ApiKey" in the "Authorization" header`,
+	)
 )
 
 const issuer = "chirpy-access"
@@ -66,6 +72,24 @@ func GetBearerToken(headers http.Header) (string, error) {
 	tokenString := strings.TrimPrefix(authorization, "Bearer ")
 	if tokenString == "" {
 		return "", ErrNoTokenAfterBearer
+	}
+
+	return tokenString, nil
+}
+
+func GetAPIKey(headers http.Header) (string, error) {
+	authorization := headers.Get("Authorization")
+	if authorization == "" {
+		return "", ErrAuthorizationHeaderEmpty
+	}
+
+	if !strings.Contains(authorization, "ApiKey ") {
+		return "", ErrNoApiKeyInAuthorizationHeader
+	}
+
+	tokenString := strings.TrimPrefix(authorization, "ApiKey ")
+	if tokenString == "" {
+		return "", ErrNoTokenAfterApiKey
 	}
 
 	return tokenString, nil

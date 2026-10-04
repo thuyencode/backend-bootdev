@@ -216,3 +216,94 @@ func TestUnit_GetBearerToken(t *testing.T) {
 		}
 	})
 }
+
+func TestUnit_GetAPIKey(t *testing.T) {
+	t.Run("should return token string for valid request", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "/", nil)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		expected := "This is an api key"
+		req.Header.Add("Authorization", fmt.Sprintf("ApiKey %s", expected))
+
+		actual, err := GetAPIKey(req.Header)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		if actual != expected {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+
+	t.Run(`should return error for request with no "Authorization" header`, func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "/", nil)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		actual, err := GetAPIKey(req.Header)
+		if err == nil {
+			t.Fatalf("want error to not be nil")
+		}
+
+		expectedErr := ErrAuthorizationHeaderEmpty
+		if !errors.Is(err, expectedErr) {
+			t.Errorf("want %q, have %q", expectedErr, err)
+		}
+
+		expected := ""
+		if actual != expected {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+
+	t.Run(`should return error for request with no "ApiKey"`, func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "/", nil)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		req.Header.Add("Authorization", "Api")
+
+		actual, err := GetAPIKey(req.Header)
+		if err == nil {
+			t.Fatalf("want error to not be nil")
+		}
+
+		expectedErr := ErrNoApiKeyInAuthorizationHeader
+		if !errors.Is(err, expectedErr) {
+			t.Errorf("want %q, have %q", expectedErr, err)
+		}
+
+		expected := ""
+		if actual != expected {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+
+	t.Run(`should return error for request with no token string`, func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "/", nil)
+		if err != nil {
+			t.Fatalf("want no error, have: %q", err)
+		}
+
+		req.Header.Add("Authorization", "ApiKey ")
+
+		actual, err := GetAPIKey(req.Header)
+		if err == nil {
+			t.Fatalf("want error to not be nil")
+		}
+
+		expectedErr := ErrNoTokenAfterApiKey
+		if !errors.Is(err, expectedErr) {
+			t.Errorf("want %q, have %q", expectedErr, err)
+		}
+
+		expected := ""
+		if actual != expected {
+			t.Errorf("want %q, have %q", expected, actual)
+		}
+	})
+}

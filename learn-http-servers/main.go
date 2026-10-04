@@ -51,9 +51,13 @@ func main() {
 	dbURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
 	jwtSecret := os.Getenv("JWT_SECRET")
+	polkaKey := os.Getenv("POLKA_KEY")
 
 	if jwtSecret == "" {
 		log.Fatal(`The "JWT_SECRET" enviroment variable is required to not be empty`)
+	}
+	if polkaKey == "" {
+		log.Fatal(`The "POLKA_KEY" enviroment variable is required to not be empty`)
 	}
 
 	db, err := sql.Open("postgres", dbURL)
@@ -566,6 +570,17 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /api/polka/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		apiKey, err := auth.GetAPIKey(r.Header)
+		if err != nil {
+			h.WriteErrorResponse(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		if apiKey != polkaKey {
+			h.WriteErrorResponse(w, "Invalid API key", http.StatusUnauthorized)
+			return
+		}
+
 		var reqBody struct {
 			Event string `json:"event"`
 			Data  struct {
