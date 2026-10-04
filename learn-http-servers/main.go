@@ -310,7 +310,29 @@ func main() {
 	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		chirps, err := apiCfg.dbQueries.SelectChirps(r.Context())
+		query := r.URL.Query()
+		authorID := query.Get("author_id")
+
+		var chirps []database.Chirp
+		var err error
+
+		if authorID != "" {
+			var userID uuid.UUID
+			userID, err = uuid.Parse(authorID)
+			if err != nil {
+				h.WriteErrorResponse(
+					w,
+					`"author_id" search query must be a valid ID`,
+					http.StatusBadRequest,
+				)
+				return
+			}
+
+			chirps, err = apiCfg.dbQueries.GetChirpsFromUser(r.Context(), userID)
+		} else {
+			chirps, err = apiCfg.dbQueries.GetChirps(r.Context())
+		}
+
 		if err != nil {
 			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
 			return
@@ -339,7 +361,7 @@ func main() {
 			return
 		}
 
-		chirp, err := apiCfg.dbQueries.SelectChirp(r.Context(), chirpID)
+		chirp, err := apiCfg.dbQueries.GetChirp(r.Context(), chirpID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				h.WriteErrorResponse(w, "Chirp not found", http.StatusNotFound)
@@ -540,7 +562,7 @@ func main() {
 			return
 		}
 
-		chirp, err := apiCfg.dbQueries.SelectChirp(r.Context(), chirpID)
+		chirp, err := apiCfg.dbQueries.GetChirp(r.Context(), chirpID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				h.WriteErrorResponse(w, "Chirp not found", http.StatusNotFound)
