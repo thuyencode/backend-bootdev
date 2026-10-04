@@ -13,7 +13,7 @@ VALUES
 RETURNING
     *;
 
--- name: SelectRefreshToken :one
+-- name: GetRefreshToken :one
 SELECT
     *
 FROM

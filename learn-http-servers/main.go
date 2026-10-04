@@ -120,20 +120,20 @@ func main() {
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		var deserialized credential
+		var requestBody credential
 		decoder := json.NewDecoder(r.Body)
-		if err := decoder.Decode(&deserialized); err != nil {
+		if err := decoder.Decode(&requestBody); err != nil {
 			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		parsedEmail, err := mail.ParseAddress(deserialized.Email)
+		parsedEmail, err := mail.ParseAddress(requestBody.Email)
 		if err != nil {
 			h.WriteErrorResponse(w, "Invalid email address", http.StatusBadRequest)
 			return
 		}
 
-		hashedPassword, err := auth.HashPassword(deserialized.Password)
+		hashedPassword, err := auth.HashPassword(requestBody.Password)
 		if err != nil {
 			h.WriteInternalServerErrorResponse(w, "Failed to hash password", err)
 			return
@@ -176,20 +176,20 @@ func main() {
 			RefreshToken string `json:"refresh_token"`
 		}
 
-		var deserialized credential
+		var requestBody credential
 		decoder := json.NewDecoder(r.Body)
-		if err := decoder.Decode(&deserialized); err != nil {
+		if err := decoder.Decode(&requestBody); err != nil {
 			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		parsedEmail, err := mail.ParseAddress(deserialized.Email)
+		parsedEmail, err := mail.ParseAddress(requestBody.Email)
 		if err != nil {
 			h.WriteErrorResponse(w, "Invalid email address", http.StatusBadRequest)
 			return
 		}
 
-		user, _ := apiCfg.dbQueries.SelectUserByEmail(r.Context(), parsedEmail.Address)
+		user, _ := apiCfg.dbQueries.GetUserByEmail(r.Context(), parsedEmail.Address)
 		if user == (database.User{}) {
 			h.WriteErrorResponse(
 				w,
@@ -199,7 +199,7 @@ func main() {
 			return
 		}
 
-		match, err := auth.CheckPasswordHash(deserialized.Password, user.HashedPassword)
+		match, err := auth.CheckPasswordHash(requestBody.Password, user.HashedPassword)
 		if err != nil {
 			h.WriteInternalServerErrorResponse(w, "Failed to hash password", err)
 			return
@@ -274,7 +274,7 @@ func main() {
 			return
 		}
 
-		_, err = apiCfg.dbQueries.SelectUserById(r.Context(), userId)
+		_, err = apiCfg.dbQueries.GetUserById(r.Context(), userId)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				h.WriteErrorResponse(w, "User not found", http.StatusNotFound)
@@ -368,7 +368,7 @@ func main() {
 			return
 		}
 
-		refreshToken, err := apiCfg.dbQueries.SelectRefreshToken(r.Context(), bearerToken)
+		refreshToken, err := apiCfg.dbQueries.GetRefreshToken(r.Context(), bearerToken)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				h.WriteErrorResponse(w, "Refresh token not found", http.StatusUnauthorized)
@@ -419,7 +419,7 @@ func main() {
 			return
 		}
 
-		refreshToken, err := apiCfg.dbQueries.SelectRefreshToken(r.Context(), bearerToken)
+		refreshToken, err := apiCfg.dbQueries.GetRefreshToken(r.Context(), bearerToken)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				h.WriteErrorResponse(w, "Refresh token not found", http.StatusUnauthorized)
@@ -458,7 +458,7 @@ func main() {
 			return
 		}
 
-		_, err = apiCfg.dbQueries.SelectUserById(r.Context(), userID)
+		_, err = apiCfg.dbQueries.GetUserById(r.Context(), userID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				h.WriteErrorResponse(w, "User id not found", http.StatusNotFound)
@@ -468,20 +468,20 @@ func main() {
 			return
 		}
 
-		var deserialized credential
+		var requestBody credential
 		decoder := json.NewDecoder(r.Body)
-		if err := decoder.Decode(&deserialized); err != nil {
+		if err := decoder.Decode(&requestBody); err != nil {
 			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		parsedEmail, err := mail.ParseAddress(deserialized.Email)
+		parsedEmail, err := mail.ParseAddress(requestBody.Email)
 		if err != nil {
 			h.WriteErrorResponse(w, "Invalid email address", http.StatusBadRequest)
 			return
 		}
 
-		hashedPassword, err := auth.HashPassword(deserialized.Password)
+		hashedPassword, err := auth.HashPassword(requestBody.Password)
 		if err != nil {
 			h.WriteInternalServerErrorResponse(w, "Failed to hash password", err)
 			return
@@ -559,6 +559,45 @@ func main() {
 
 		if err = apiCfg.dbQueries.DeleteChirp(r.Context(), chirp.ID); err != nil {
 			h.WriteInternalServerErrorResponse(w, "Failed to delete db record(s)", err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("POST /api/polka/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		var reqBody struct {
+			Event string `json:"event"`
+			Data  struct {
+				UserID uuid.UUID `json:"user_id"`
+			} `json:"data"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&reqBody); err != nil {
+			slog.Error("Failed to decode request body", "err", err)
+			h.WriteErrorResponse(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if reqBody.Event != "user.upgraded" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		user, err := apiCfg.dbQueries.GetUserById(r.Context(), reqBody.Data.UserID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				h.WriteErrorResponse(w, "User not found", http.StatusNotFound)
+				return
+			}
+			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
+			return
+		}
+
+		_, err = apiCfg.dbQueries.UpgradeUser(r.Context(), user.ID)
+		if err != nil {
+			h.WriteInternalServerErrorResponse(w, "Failed to update db record(s)", err)
 			return
 		}
 
