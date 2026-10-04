@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
+	"sort"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -312,6 +313,7 @@ func main() {
 
 		query := r.URL.Query()
 		authorID := query.Get("author_id")
+		sortBy := query.Get("sort")
 
 		var chirps []database.Chirp
 		var err error
@@ -337,6 +339,14 @@ func main() {
 			h.WriteInternalServerErrorResponse(w, "Failed to retrieve db record(s)", err)
 			return
 		}
+
+		sort.Slice(chirps, func(i, j int) bool {
+			if sortBy == "desc" {
+				return chirps[i].CreatedAt.After(chirps[j].CreatedAt)
+			} else {
+				return chirps[i].CreatedAt.Before(chirps[j].CreatedAt)
+			}
+		})
 
 		resBody, err := json.Marshal(chirps)
 		if err != nil {
