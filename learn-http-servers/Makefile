@@ -20,10 +20,10 @@ clean:
 	go clean
 
 db-migrate-up:
-	goose postgres "$(DB_URL)" -dir sql/schema up
+	goose up
 
 db-migrate-down:
-	goose postgres "$(DB_URL)" -dir sql/schema down
+	goose down
 
 sqlc:
 	sqlc generate
