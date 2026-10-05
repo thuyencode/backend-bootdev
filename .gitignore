@@ -23,6 +23,8 @@
 !*.html
 !*.sql
 
+!Dockerfile
+!.dockerignore
 
 !scripts/**/*
 !*/assets/**/*
