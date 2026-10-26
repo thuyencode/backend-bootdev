@@ -1,2 +1,10 @@
-docker:
-	docker build -t bookbot -f Dockerfile.py .
+build:
+	GOOS=linux GOARCH=amd64 go build
+image: build
+	docker build . -t thuyencode/goserver:latest
+push-image: image
+	docker push thuyencode/goserver:latest
+run:
+	godotenv -f .env go run .
+clean:
+	go clean
