@@ -1,5 +1,7 @@
 # All the practice code in the Learn HTTP Servers course
 
+Note: This project doesn't use any form of AI/LLM assistance.
+
 ## Docker guide
 
 Create a `.env` from [`.env.example`](./.env.example). Then execute the following commands to start the services
